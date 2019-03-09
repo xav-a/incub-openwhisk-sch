@@ -249,17 +249,27 @@ class ShardingContainerPoolBalancer(
       if (!isBlackboxInvocation) (schedulingState.managedInvokers, schedulingState.managedStepSizes)
       else (schedulingState.blackboxInvokers, schedulingState.blackboxStepSizes)
     val chosen = if (invokersToUse.nonEmpty) {
-      val hash = ShardingContainerPoolBalancer.generateHash(msg.user.namespace.name, action.fullyQualifiedName(false))
-      val homeInvoker = hash % invokersToUse.size
-      val stepSize = stepSizes(hash % stepSizes.size)
+      //val hash = ShardingContainerPoolBalancer.generateHash(msg.user.namespace.name, action.fullyQualifiedName(false))
+      ///* Original Code
+      //val homeInvoker = hash % invokersToUse.size
+      //*/
+      //val stepSize = stepSizes(hash % stepSizes.size)
+      
+      
+      // 2019/02/15 XA
+      println(s"Invokers To Use, $invokersToUse")
+     
+      val indexes = List.range(0, invokersToUse.size) 
       val invoker = ShardingContainerPoolBalancer.schedule(
         action.limits.concurrency.maxConcurrent,
         action.fullyQualifiedName(true),
         invokersToUse,
         schedulingState.invokerSlots,
         action.limits.memory.megabytes,
-        homeInvoker,
-        stepSize)
+        //homeInvoker,
+        //stepSize
+        scala.util.Random.shuffle(indexes)
+        )
       invoker
     } else {
       None
@@ -476,6 +486,7 @@ class ShardingContainerPoolBalancer(
 }
 
 object ShardingContainerPoolBalancer extends LoadBalancerProvider {
+  
 
   override def instance(whiskConfig: WhiskConfig, instance: ControllerInstanceId)(
     implicit actorSystem: ActorSystem,
@@ -550,8 +561,11 @@ object ShardingContainerPoolBalancer extends LoadBalancerProvider {
    * @param concurrentSlots optional map of invoker -> semaphore to track concurrency slots for this action
    * @param dispatched semaphores for each invoker to give the slots away from
    * @param slots Number of slots, that need to be acquired (e.g. memory in MB)
-   * @param index the index to start from (initially should be the "homeInvoker"
+   * @param index the index to start from (initially should be the "homeInvoker")
    * @param step stable identifier of the entity to be scheduled
+   *
+   * @param indexSeq Seq of indexes to be trotted for new invokers
+   *
    * @return an invoker to schedule to or None of no invoker is available
    */
   @tailrec
@@ -560,19 +574,23 @@ object ShardingContainerPoolBalancer extends LoadBalancerProvider {
                invokers: IndexedSeq[InvokerHealth],
                dispatched: IndexedSeq[NestedSemaphore[FullyQualifiedEntityName]],
                slots: Int,
-               index: Int,
-               step: Int,
+               //index: Int,
+               //step: Int,
+               indexes: List[Int],
                stepsDone: Int = 0)(implicit logging: Logging, transId: TransactionId): Option[InvokerInstanceId] = {
     val numInvokers = invokers.size
 
     if (numInvokers > 0) {
+      // XAV - 2019/03/07
+      val index = indexes(stepsDone)
+
       val invoker = invokers(index)
       //test this invoker - if this action supports concurrency, use the scheduleConcurrent function
       if (invoker.status.isUsable && dispatched(invoker.id.toInt).tryAcquireConcurrent(fqn, maxConcurrent, slots)) {
         Some(invoker.id)
       } else {
         // If we've gone through all invokers
-        if (stepsDone == numInvokers + 1) {
+        if (stepsDone == numInvokers) {//+ 1) {
           val healthyInvokers = invokers.filter(_.status.isUsable)
           if (healthyInvokers.nonEmpty) {
             // Choose a healthy invoker randomly
@@ -585,8 +603,7 @@ object ShardingContainerPoolBalancer extends LoadBalancerProvider {
             None
           }
         } else {
-          val newIndex = (index + step) % numInvokers
-          schedule(maxConcurrent, fqn, invokers, dispatched, slots, newIndex, step, stepsDone + 1)
+          schedule(maxConcurrent, fqn, invokers, dispatched, slots, indexes, stepsDone + 1)
         }
       }
     } else {
