@@ -579,10 +579,9 @@ object ShardingContainerPoolBalancer extends LoadBalancerProvider {
                indexes: List[Int],
                stepsDone: Int = 0)(implicit logging: Logging, transId: TransactionId): Option[InvokerInstanceId] = {
     val numInvokers = invokers.size
-
     if (numInvokers > 0) {
       // XAV - 2019/03/07
-      val index = indexes(stepsDone)
+      val index = indexes(stepsDone % numInvokers) //modulo in case stepsDone > invokers.size
 
       val invoker = invokers(index)
       //test this invoker - if this action supports concurrency, use the scheduleConcurrent function
