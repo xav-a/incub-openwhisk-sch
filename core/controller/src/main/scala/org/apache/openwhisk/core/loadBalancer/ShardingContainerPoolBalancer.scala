@@ -589,7 +589,7 @@ object ShardingContainerPoolBalancer extends LoadBalancerProvider {
         Some(invoker.id)
       } else {
         // If we've gone through all invokers
-        if (stepsDone == numInvokers) {//+ 1) {
+        if (stepsDone == numInvokers + 1) {
           val healthyInvokers = invokers.filter(_.status.isUsable)
           if (healthyInvokers.nonEmpty) {
             // Choose a healthy invoker randomly
@@ -602,7 +602,9 @@ object ShardingContainerPoolBalancer extends LoadBalancerProvider {
             None
           }
         } else {
-          schedule(maxConcurrent, fqn, invokers, dispatched, slots, indexes, stepsDone + 1)
+          schedule(maxConcurrent, fqn, invokers, dispatched, slots, 
+                    if (index == 0 && stepsDone > 0) scala.util.Random.shuffle(indexes) else indexes, 
+                    stepsDone + 1)
         }
       }
     } else {
